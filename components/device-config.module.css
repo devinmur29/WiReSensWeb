@@ -1,0 +1,9 @@
+.deviceDiv {
+  height: 400px;
+  width: 400px;
+}
+
+.green {
+  fill: green; /* For circle fill */
+  stroke: green; /* For polyline stroke */
+}
