@@ -1,42 +1,51 @@
+// page.jsx
 "use client";
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { io } from "socket.io-client";
-import dynamic from "next/dynamic"; // Import dynamic for client-side loading
+import dynamic from "next/dynamic";
 
-// Dynamically import InteractiveHeatmap3D with ssr: false
-// This ensures the component is only rendered on the client side,
-// preventing 'document is not defined' and useImperativeHandle errors during SSR.
+// Import both heatmap components after you've renamed them
+// Adjust paths based on where you put them (e.g., in a 'components' folder)
+// FIX: Ensure dynamic imports correctly target the default export
+const InteractiveHeatmap2D = dynamic(
+  () => import("./interactiveheatmap.jsx").then(mod => {
+    console.log('InteractiveHeatmap2D mod.default:', mod.default); // Debugging line
+    return mod.default;
+  }),
+  { ssr: false }
+);
 const InteractiveHeatmap3D = dynamic(
-  () => import("./interactiveheatmap"),
+  () => import("./interactiveheatmap_3D.jsx").then(mod => {
+    console.log('InteractiveHeatmap3D mod.default:', mod.default); // Debugging line
+    return mod.default;
+  }),
   { ssr: false }
 );
 
-// FIX 2: Update path to be relative to app/page.jsx
-import Toolbar from "./toolbar";
-// FIX 3: Update path to be relative to app/page.module.css
+import Toolbar from "./toolbar"; // Your existing toolbar
 import styles from "./page.module.css";
-// FIX 4: Update path to be relative to app/constants
 import defaultWiReSensConfig from "./constants";
-import { Button } from "@/components/ui/button";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-// FIX 5: Update path for AppSidebar to be relative to components/app-sidebar
-import { AppSidebar } from "../components/app-sidebar";
-import { AlignVerticalJustifyEnd } from "lucide-react"; // Imported but not used
+import { Button } from "@/components/ui/button"; // From your 3D code
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"; // From your 3D code
+import { AppSidebar } from "../components/app-sidebar"; // From your 3D code
+import { AlignVerticalJustifyEnd } from "lucide-react"; // From your 3D code
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@/components/ui/tooltip";
+} from "@/components/ui/tooltip"; // From your 3D code
 
-// Function to generate a 2D array (single layer) for a sensor
-// Output will be a 2D array: array[rows][cols]
+// Constants for 3D specific dimensions
+const HIGH_DEF_COLS = 64;
+const HIGH_DEF_ROWS = 64;
+
 const generateRandomArray = (rows, cols) => {
   const array = [];
-  for (let r = 0; r < rows; r++) { // Iterate rows
+  for (let r = 0; r < rows; r++) {
     const row = [];
-    for (let c = 0; c < cols; c++) { // Iterate columns
-      row.push(0); // Initialize with 0
+    for (let c = 0; c < cols; c++) {
+      row.push(0);
     }
     array.push(row);
   }
@@ -44,6 +53,9 @@ const generateRandomArray = (rows, cols) => {
 };
 
 const Home = () => {
+  // NEW STATE FOR TOGGLE
+  const [is3DMode, setIs3DMode] = useState(false); // Start in 2D mode by default? Or based on config?
+
   const [WiSensConfig, setWiSensConfig] = useState(defaultWiReSensConfig);
   const [selectMode, setSelectMode] = useState(false);
   const [eraseMode, setEraseMode] = useState(false);
@@ -51,50 +63,69 @@ const Home = () => {
   const [connecting, setConnecting] = useState(false);
   const [stepCount, setStepCount] = useState(0);
   const [socket, setSocket] = useState(null);
-  const interactiveHeatmapRefs = useRef({}); // Store refs dynamically
+  const interactiveHeatmapRefs = useRef({});
   const hiddenFileInputRefs = useRef({});
+  const hiddenFileInputConfigRefs = useRef({}); // Only for 3D's specific config loading
   const hiddenFileInput2Refs = useRef({});
   const sensorDivRefs = useRef({});
   const [open, setOpen] = useState(false);
   const [calibrating, setCalibrating] = useState(false);
+  const [loadedLayouts, setLoadedLayouts] = useState({}); // From 3D code
 
-  const defaultSensors = {};
-  const defaultDims = {};
-  
-  // Define the desired high definition dimensions
-  const HIGH_DEF_COLS = 64; 
-  const HIGH_DEF_ROWS = 64; 
+  // FIX: Define acks state here
+  const initialAcksLength = Array.isArray(defaultWiReSensConfig.sensors) ? defaultWiReSensConfig.sensors.length : 0;
+  const [acks, setAcks] = useState(Array(initialAcksLength).fill(false));
 
-  defaultWiReSensConfig.sensors.forEach((sensorConfig) => {
-    // Override calculated dimensions with high definition values
-    const numReadWires = HIGH_DEF_ROWS;
-    const numGroundWires = HIGH_DEF_COLS;
+  // FIX: Declare sensors and sensorDims state variables
+  // Initialize them with empty objects, as their content will be populated
+  // by the useEffect below based on WiSensConfig.sensors and is3DMode.
+  const [sensors, setSensors] = useState({});
+  const [sensorDims, setSensorDims] = useState({});
 
-    defaultSensors[sensorConfig.id] = generateRandomArray(
-      numReadWires, // rows
-      numGroundWires // cols
-    );
-    // Add numLayers to dim, assuming 1 layer for now: [cols, rows, layers]
-    defaultDims[sensorConfig.id] = [numGroundWires, numReadWires, 1];
-    
-    // Ensure refs are initialized for each sensor
-    interactiveHeatmapRefs.current[sensorConfig.id] = interactiveHeatmapRefs.current[sensorConfig.id] || React.createRef();
-    hiddenFileInputRefs.current[sensorConfig.id] = hiddenFileInputRefs.current[sensorConfig.id] || React.createRef();
-    hiddenFileInput2Refs.current[sensorConfig.id] = hiddenFileInput2Refs.current[sensorConfig.id] || React.createRef();
-    sensorDivRefs.current[sensorConfig.id] = sensorDivRefs.current[sensorConfig.id] || React.createRef();
-  });
+  // Initialize refs based on current WiSensConfig and mode (this needs to be dynamic)
+  useEffect(() => {
+    const currentDefaultSensors = {};
+    const currentDefaultDims = {};
 
-  const [sensors, setSensors] = useState(defaultSensors);
-  // Initialize sensorDims with the high definition values for all sensors
-  const [sensorDims, setSensorDims] = useState(defaultDims);
-  // Correctly initialize acks based on the number of sensors initially
-  const [acks, setAcks] = useState(Array(defaultWiReSensConfig.sensors.length).fill(false));
+    if (WiSensConfig && Array.isArray(WiSensConfig.sensors)) {
+      WiSensConfig.sensors.forEach((sensorConfig) => {
+        let numReadWires, numGroundWires;
+        if (is3DMode) {
+          numReadWires = HIGH_DEF_ROWS;
+          numGroundWires = HIGH_DEF_COLS;
+          currentDefaultDims[sensorConfig.id] = [numGroundWires, numReadWires, 1]; // 3D dim
+        } else {
+          numReadWires = sensorConfig.endCoord[0] - sensorConfig.startCoord[0] + 1;
+          numGroundWires = sensorConfig.endCoord[1] - sensorConfig.startCoord[1] + 1;
+          currentDefaultDims[sensorConfig.id] = [numReadWires, numGroundWires]; // 2D dim
+        }
+        currentDefaultSensors[sensorConfig.id] = generateRandomArray(
+          numReadWires,
+          numGroundWires
+        );
+        interactiveHeatmapRefs.current[sensorConfig.id] = interactiveHeatmapRefs.current[sensorConfig.id] || React.createRef();
+        hiddenFileInputRefs.current[sensorConfig.id] = hiddenFileInputRefs.current[sensorConfig.id] || React.createRef();
+        hiddenFileInput2Refs.current[sensorConfig.id] = hiddenFileInput2Refs.current[sensorConfig.id] || React.createRef();
+        sensorDivRefs.current[sensorConfig.id] = sensorDivRefs.current[sensorConfig.id] || React.createRef();
 
-  // Ref to store the last time sensor data was processed for throttling
+        // Only create config ref if it's the main config (from 3D)
+        if (is3DMode && !hiddenFileInputConfigRefs.current['mainConfig']) {
+          hiddenFileInputConfigRefs.current['mainConfig'] = React.createRef();
+        }
+      });
+    } else {
+      console.warn("WiSensConfig.sensors is undefined or not an array. Initializing with empty sensor data.");
+    }
+
+    // Set the state here
+    setSensors(currentDefaultSensors);
+    setSensorDims(currentDefaultDims);
+    // Ensure acks state is also updated if config changes, as its length depends on WiSensConfig.sensors
+    setAcks(Array(Array.isArray(WiSensConfig.sensors) ? WiSensConfig.sensors.length : 0).fill(false));
+  }, [is3DMode, WiSensConfig.sensors]); // Added WiSensConfig.sensors to dependencies
+
   const lastSensorDataUpdateTime = useRef(0);
-  // Throttle delay in milliseconds (e.g., 50ms means max 20 updates per second)
   const THROTTLE_DELAY_MS = 50;
-
 
   const onSelectNodesClick = () => {
     setSelectMode(!selectMode);
@@ -108,59 +139,138 @@ const Home = () => {
     setAdcMode(!adcMode);
   };
 
-  const updateSensorObjects = (config) => {
-    const updatedSensors = { ...sensors };
-    const updatedDims = { ...sensorDims };
-    config.sensors.forEach((sensorConfig) => {
-      // Override calculated dimensions with high definition values for updates
-      const numReadWires = HIGH_DEF_ROWS;
-      const numGroundWires = HIGH_DEF_COLS;
-
-      // Only re-initialize if it's a new device or dimensions are changing to the high-def
-      if (
-        !updatedSensors[sensorConfig.id] ||
-        updatedDims[sensorConfig.id][0] !== numGroundWires || // Compare numCols
-        updatedDims[sensorConfig.id][1] !== numReadWires    // Compare numRows
-      ) {
-        console.log("Updating sensor ", sensorConfig.id);
-        updatedSensors[sensorConfig.id] = generateRandomArray(
-          numReadWires, // rows
-          numGroundWires // cols
-        );
-        // Add numLayers to dim for updated config
-        updatedDims[sensorConfig.id] = [numGroundWires, numReadWires, 1]; // [cols, rows, layers]
-      }
-      // Ensure refs exist for newly added/updated sensors
-      interactiveHeatmapRefs.current[sensorConfig.id] = interactiveHeatmapRefs.current[sensorConfig.id] || React.createRef();
-      hiddenFileInputRefs.current[sensorConfig.id] = hiddenFileInputRefs.current[sensorConfig.id] || React.createRef();
-      hiddenFileInput2Refs.current[sensorConfig.id] = hiddenFileInput2Refs.current[sensorConfig.id] || React.createRef();
-      sensorDivRefs.current[sensorConfig.id] = sensorDivRefs.current[sensorConfig.id] || React.createRef();
+  const toggleHeatmapMode = useCallback(() => {
+    setIs3DMode(prevMode => {
+      const newMode = !prevMode;
+      console.log(`Heatmap mode toggled to: ${newMode ? '3D' : '2D'}`);
+      return newMode;
     });
+    // When switching modes, clear current sensor data and dims
+    // The useEffect above will re-initialize them based on the new mode
+    setSensors({});
+    setSensorDims({});
+    setAcks(Array(Array.isArray(WiSensConfig.sensors) ? WiSensConfig.sensors.length : 0).fill(false)); // Reset acks
+  }, [WiSensConfig.sensors]);
+
+  const updateSensorObjects = (config) => {
+    if (!config || !Array.isArray(config.sensors)) {
+      console.error("updateSensorObjects: Invalid configuration provided. Expected config.sensors to be an array.");
+      return;
+    }
+
+    const updatedSensors = {};
+    const updatedDims = {};
+    const newAcksLength = config.sensors.length;
+
+    config.sensors.forEach((sensorConfig) => {
+      let numReadWires, numGroundWires;
+      if (is3DMode) {
+        numReadWires = HIGH_DEF_ROWS;
+        numGroundWires = HIGH_DEF_COLS;
+        updatedDims[sensorConfig.id] = [numGroundWires, numReadWires, 1]; // 3D dim
+      } else {
+        numReadWires = sensorConfig.endCoord[0] - sensorConfig.startCoord[0] + 1;
+        numGroundWires = sensorConfig.endCoord[1] - sensorConfig.startCoord[1] + 1;
+        updatedDims[sensorConfig.id] = [numReadWires, numGroundWires]; // 2D dim
+      }
+      updatedSensors[sensorConfig.id] = generateRandomArray(
+        numReadWires,
+        numGroundWires
+      );
+
+      // Ensure refs exist for new/updated sensors
+      if (!interactiveHeatmapRefs.current[sensorConfig.id]) {
+        interactiveHeatmapRefs.current[sensorConfig.id] = React.createRef();
+      }
+      if (!hiddenFileInputRefs.current[sensorConfig.id]) {
+        hiddenFileInputRefs.current[sensorConfig.id] = React.createRef();
+      }
+      if (!hiddenFileInput2Refs.current[sensorConfig.id]) {
+        hiddenFileInput2Refs.current[sensorConfig.id] = React.createRef();
+      }
+      if (!sensorDivRefs.current[sensorConfig.id]) {
+        sensorDivRefs.current[sensorConfig.id] = React.createRef();
+      }
+      // Only create config ref if it's the main config (from 3D)
+      if (is3DMode && !hiddenFileInputConfigRefs.current['mainConfig']) {
+        hiddenFileInputConfigRefs.current['mainConfig'] = React.createRef();
+      }
+    });
+
     setSensorDims(updatedDims);
     setSensors(updatedSensors);
     setWiSensConfig(config);
-    // Reset acks based on the new configuration's sensor count
-    setAcks(Array(config.sensors.length).fill(false));
+    setAcks(Array(newAcksLength).fill(false));
   };
 
-  const handleFileChange = (event) => {
+  const handleConfigFileChange = (event) => {
     const file = event.target.files[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
-        const config = JSON.parse(e.target.result);
-        updateSensorObjects(config);
+        try {
+          const parsedConfig = JSON.parse(e.target.result);
+          if (parsedConfig && Array.isArray(parsedConfig.sensors)) {
+            updateSensorObjects(parsedConfig);
+            console.log("Main configuration loaded successfully.");
+          } else {
+            console.error("Error: Parsed configuration file does not have the expected 'sensors' array.");
+            alert("Failed to parse configuration file: Missing or invalid 'sensors' array.");
+          }
+        } catch (error) {
+          console.error("Error parsing config file:", error);
+          alert("Failed to parse configuration file. Please ensure it's valid JSON.");
+        }
       };
       reader.readAsText(file);
     }
   };
 
+  const handleLayoutFileChange = (event, sensorId) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const loadedLayoutData = JSON.parse(e.target.result);
+        if (is3DMode) { // Specific check for 3D layout structure
+          if (loadedLayoutData.cellPositions && loadedLayoutData.erasedNodes !== undefined) {
+              setLoadedLayouts(prev => ({
+                  ...prev,
+                  [sensorId]: loadedLayoutData
+              }));
+              console.log(`Layout data for sensor ${sensorId} queued.`);
+          } else {
+              console.error("Error: Parsed layout file does not have the expected 'cellPositions' or 'erasedNodes'.");
+              alert("Failed to parse layout file. Please ensure it's a valid layout JSON for 3D.");
+          }
+        } else { // 2D layout structure might be different, or handled within InteractiveHeatmap2D
+          if (interactiveHeatmapRefs.current[sensorId]?.current) {
+            interactiveHeatmapRefs.current[sensorId].current.loadLayout(event); // Assume 2D component handles event
+          } else {
+            console.warn(`Cannot load layout for sensor ${sensorId}: interactiveHeatmapRef is not ready (2D mode).`);
+          }
+        }
+      } catch (error) {
+        console.error("Error parsing layout file:", error);
+        alert("Failed to parse layout file. Please ensure it's valid JSON.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+
   useEffect(() => {
-    const localIp = WiSensConfig.vizOptions?.localIp // Use optional chaining for safety
+    const localIp = WiSensConfig.vizOptions?.localIp
       ? WiSensConfig.vizOptions.localIp
       : "127.0.0.1";
 
-    const newSocket = io(`http://${localIp}:5328`);
+    // FIX: Add explicit transports to the Socket.IO client options
+    const newSocket = io(`http://${localIp}:5328`, {
+      transports: ['websocket', 'polling'], // Prioritize websocket, then fallback to polling
+      jsonp: false // Disable JSONP unless specifically needed
+    });
 
     newSocket.on("connect", () => {
       console.log("Connected to server");
@@ -172,62 +282,66 @@ const Home = () => {
 
     newSocket.on("sensor_data", (data) => {
       const currentTime = Date.now();
-      // Throttle sensor data updates
       if (currentTime - lastSensorDataUpdateTime.current < THROTTLE_DELAY_MS) {
-        return; // Skip update if too soon
+        return;
       }
       lastSensorDataUpdateTime.current = currentTime;
 
-      const dataObj = JSON.parse(data); // This is expected to be an object like { "sensorId1": [[...]], "sensorId2": [[...]] }
-      console.log("Received sensor_data:", dataObj); // LOGGING INCOMING DATA
+      let dataObj;
+      try {
+        dataObj = JSON.parse(data);
+      } catch (error) {
+        console.error("Error parsing sensor_data JSON:", error);
+        return;
+      }
 
       setSensors(prevSensors => {
         const updatedSensors = { ...prevSensors };
         for (const sensorId in dataObj) {
-          const incomingLayerData = dataObj[sensorId]; // This is the 2D array from backend
-          const incomingRows = incomingLayerData.length;
-          const incomingCols = incomingLayerData[0] ? incomingLayerData[0].length : 0;
-
-          const newSensorData = generateRandomArray(HIGH_DEF_ROWS, HIGH_DEF_COLS); // Create target high-def grid
-
-          // Perform Bilinear Interpolation
-          for (let r = 0; r < HIGH_DEF_ROWS; r++) {
-            for (let c = 0; c < HIGH_DEF_COLS; c++) {
-              // Calculate floating-point coordinates in the source grid
-              const srcX = (c / (HIGH_DEF_COLS - 1)) * (incomingCols - 1);
-              const srcY = (r / (HIGH_DEF_ROWS - 1)) * (incomingRows - 1);
-
-              // Get the integer coordinates of the top-left pixel
-              const x1 = Math.floor(srcX);
-              const y1 = Math.floor(srcY);
-
-              // Get the integer coordinates of the bottom-right pixel
-              const x2 = Math.min(x1 + 1, incomingCols - 1);
-              const y2 = Math.min(y1 + 1, incomingRows - 1);
-
-              // Get the fractional parts
-              const fx = srcX - x1;
-              const fy = srcY - y1;
-
-              // Get the values of the four surrounding pixels
-              const q11 = incomingLayerData[y1]?.[x1] || 0;
-              const q12 = incomingLayerData[y1]?.[x2] || 0;
-              const q21 = incomingLayerData[y2]?.[x1] || 0;
-              const q22 = incomingLayerData[y2]?.[x2] || 0;
-
-              // Perform interpolation
-              const interpolatedValue =
-                q11 * (1 - fx) * (1 - fy) +
-                q12 * fx * (1 - fy) +
-                q21 * (1 - fx) * fy +
-                q22 * fx * fy;
-
-              newSensorData[r][c] = interpolatedValue;
-            }
+          const incomingLayerData = dataObj[sensorId];
+          if (!Array.isArray(incomingLayerData) || incomingLayerData.length === 0) {
+            console.warn(`Sensor data for ID ${sensorId} is malformed or empty.`);
+            continue;
           }
-          updatedSensors[sensorId] = newSensorData;
+
+          if (is3DMode) {
+            const incomingRows = incomingLayerData.length;
+            const incomingCols = incomingLayerData[0] ? incomingLayerData[0].length : 0;
+            const newSensorData = generateRandomArray(HIGH_DEF_ROWS, HIGH_DEF_COLS);
+
+            for (let r = 0; r < HIGH_DEF_ROWS; r++) {
+              for (let c = 0; c < HIGH_DEF_COLS; c++) {
+                const srcX = (c / (HIGH_DEF_COLS - 1)) * (incomingCols - 1);
+                const srcY = (r / (HIGH_DEF_ROWS - 1)) * (incomingRows - 1);
+
+                const x1 = Math.floor(srcX);
+                const y1 = Math.floor(srcY);
+
+                const x2 = Math.min(x1 + 1, incomingCols - 1);
+                const y2 = Math.min(y1 + 1, incomingRows - 1);
+
+                const fx = srcX - x1;
+                const fy = srcY - y1;
+
+                const q11 = (incomingLayerData[y1] && incomingLayerData[y1][x1] !== undefined) ? incomingLayerData[y1][x1] : 0;
+                const q12 = (incomingLayerData[y1] && incomingLayerData[y1][x2] !== undefined) ? incomingLayerData[y1][x2] : 0;
+                const q21 = (incomingLayerData[y2] && incomingLayerData[y2][x1] !== undefined) ? incomingLayerData[y2][x1] : 0;
+                const q22 = (incomingLayerData[y2] && incomingLayerData[y2][x2] !== undefined) ? incomingLayerData[y2][x2] : 0;
+
+                const interpolatedValue =
+                  q11 * (1 - fx) * (1 - fy) +
+                  q12 * fx * (1 - fy) +
+                  q21 * (1 - fx) * fy +
+                  q22 * fx * fy;
+
+                newSensorData[r][c] = interpolatedValue;
+              }
+            }
+            updatedSensors[sensorId] = newSensorData;
+          } else { // 2D mode, direct assignment
+            updatedSensors[sensorId] = incomingLayerData;
+          }
         }
-        console.log("Updated sensors state (interpolated):", updatedSensors); // LOGGING UPDATED STATE
         return updatedSensors;
       });
     });
@@ -237,14 +351,17 @@ const Home = () => {
     });
 
     newSocket.on("connection_status", (msg) => {
+      if (!msg || typeof msg.connected === 'undefined' || typeof msg.id === 'undefined') {
+        console.warn("Received malformed connection_status message:", msg);
+        return;
+      }
       let status = msg["connected"];
       let id = msg["id"];
       console.log("Connection Status Message Received");
       if (status) {
-        const index = WiSensConfig.sensors.findIndex(
+        const index = Array.isArray(WiSensConfig.sensors) ? WiSensConfig.sensors.findIndex(
           (sensor) => sensor.id === id
-        );
-        // Safely update acks state to avoid direct mutation and ensure index exists
+        ) : -1;
         setAcks(prevAcks => {
           const updatedAcks = [...prevAcks];
           if (index !== -1 && index < updatedAcks.length) {
@@ -256,12 +373,20 @@ const Home = () => {
     });
 
     newSocket.on("calibration_done", (data) => {
+      if (!data || typeof data.id === 'undefined' || typeof data.value === 'undefined') {
+        console.warn("Received malformed calibration_done message:", data);
+        return;
+      }
       console.log("Calibration Done");
       let sensor_id = data.id;
       let resistance = data.value;
-      setCalibrating(false); // End calibration state regardless of update
-      // Update WiSensConfig using a functional update to ensure latest state
+      setCalibrating(false);
       setWiSensConfig((prevConfig) => {
+        if (!prevConfig || !Array.isArray(prevConfig.sensors)) {
+          console.warn("Calibration done received, but WiSensConfig.sensors is not an array.");
+          return prevConfig;
+        }
+
         const foundDevice = prevConfig.sensors.find(
           (sensor) => sensor.id === sensor_id
         );
@@ -270,7 +395,7 @@ const Home = () => {
           const newDevice = { ...foundDevice, resistance };
           const updatedSensors = prevConfig.sensors
             .map((sensor) => (sensor.id === sensor_id ? newDevice : sensor))
-            .sort((a, b) => a.id - b.id); // Re-sort if order matters
+            .sort((a, b) => a.id - b.id);
           return { ...prevConfig, sensors: updatedSensors };
         }
         return prevConfig;
@@ -282,25 +407,28 @@ const Home = () => {
     return () => {
       newSocket.disconnect();
     };
-  }, [WiSensConfig.vizOptions?.localIp]); // Dependency only on the relevant config part
+  }, [WiSensConfig.vizOptions?.localIp, WiSensConfig.sensors, is3DMode]);
 
   useEffect(() => {
-    // Check if all acks are true IF there are sensors configured
-    if (WiSensConfig.sensors.length > 0 && acks.every((ack) => ack === true)) {
+    if (Array.isArray(WiSensConfig.sensors) && WiSensConfig.sensors.length > 0 && acks.every((ack) => ack === true)) {
       setConnecting(false);
     }
-  }, [acks, WiSensConfig.sensors.length]); // Add WiSensConfig.sensors.length to dependency array
+  }, [acks, WiSensConfig.sensors.length, WiSensConfig.sensors]);
+
 
   const handleClick = (hiddenFileRef) => {
-    hiddenFileRef.current.click();
+    if (hiddenFileRef && hiddenFileRef.current) {
+      hiddenFileRef.current.click();
+    } else {
+      console.warn("Attempted to click a hidden file input, but the ref is not set.");
+    }
   };
 
   const onConnectDevices = () => {
-    // If all sensors are connected based on current config, stop. Else, start.
-    if (WiSensConfig.sensors.length > 0 && acks.every((ack) => ack === true)) {
+    if (Array.isArray(WiSensConfig.sensors) && WiSensConfig.sensors.length > 0 && acks.every((ack) => ack === true)) {
       if (socket) socket.emit("stopViz");
-      setAcks(Array(WiSensConfig.sensors.length).fill(false)); // Reset acks for next connection attempt
-    } else if (!connecting && socket) { // Ensure socket exists before emitting
+      setAcks(Array(WiSensConfig.sensors.length).fill(false));
+    } else if (!connecting && socket) {
       socket.emit("startViz", WiSensConfig);
       setConnecting(true);
     }
@@ -325,10 +453,13 @@ const Home = () => {
 
   const handleDeleteDevice = (id) => {
     setWiSensConfig((prevConfig) => {
+      if (!prevConfig || !Array.isArray(prevConfig.sensors)) {
+        console.warn("handleDeleteDevice: WiSensConfig.sensors is not an array.");
+        return prevConfig;
+      }
       const newSensors = prevConfig.sensors.filter((device) => device.id !== id);
       return { ...prevConfig, sensors: newSensors };
     });
-    // Remove data and dims for the deleted device
     setSensors((prevSensors) => {
       const newSensors = { ...prevSensors };
       delete newSensors[id];
@@ -339,46 +470,65 @@ const Home = () => {
       delete newDims[id];
       return newDims;
     });
-    // Update acks array length
-    setAcks(prevAcks => prevAcks.slice(0, prevAcks.length - 1)); 
+    setLoadedLayouts(prev => { // Keep for 3D layout compatibility
+        const newLayouts = { ...prev };
+        delete newLayouts[id];
+        return newLayouts;
+    });
+    setAcks(prevAcks => prevAcks.slice(0, Math.max(0, prevAcks.length - 1)));
   };
 
   const handleAddDevice = () => {
-    const newId = WiSensConfig.sensors.length > 0 ? Math.max(...WiSensConfig.sensors.map(s => s.id)) + 1 : 1;
+    const newId = (Array.isArray(WiSensConfig.sensors) && WiSensConfig.sensors.length > 0) ? Math.max(...WiSensConfig.sensors.map(s => s.id)) + 1 : 1;
     const newDevice = {
       id: newId,
       protocol: "ble",
       serialPort: "",
       deviceName: `New Device ${newId}`,
       startCoord: [0, 0],
-      endCoord: [7, 7], // Default to 8x8 in config, but will be overridden for visualization
+      endCoord: [7, 7], // Default 2D dimensions
       resistance: 1000,
       intermittent: { enabled: false, p: 0, d: 0 },
       outlineImage: "",
     };
 
     setWiSensConfig((prevConfig) => {
-      const updatedSensors = [...prevConfig.sensors, newDevice].sort((a, b) => a.id - b.id);
+      const currentSensors = Array.isArray(prevConfig.sensors) ? prevConfig.sensors : [];
+      const updatedSensors = [...currentSensors, newDevice].sort((a, b) => a.id - b.id);
       return { ...prevConfig, sensors: updatedSensors };
     });
 
-    // Initialize new sensor's data and dims with high definition
-    const numReadWires = HIGH_DEF_ROWS;
-    const numGroundWires = HIGH_DEF_COLS;
+    let numReadWires, numGroundWires;
+    if (is3DMode) {
+      numReadWires = HIGH_DEF_ROWS;
+      numGroundWires = HIGH_DEF_COLS;
+    } else {
+      numReadWires = newDevice.endCoord[0] - newDevice.startCoord[0] + 1;
+      numGroundWires = newDevice.endCoord[1] - newDevice.startCoord[1] + 1;
+    }
+
     setSensors((prev) => ({
       ...prev,
       [newDevice.id]: generateRandomArray(numReadWires, numGroundWires),
     }));
     setSensorDims((prev) => ({
       ...prev,
-      [newDevice.id]: [numGroundWires, numReadWires, 1], // [cols, rows, layers]
+      [newDevice.id]: is3DMode ? [numGroundWires, numReadWires, 1] : [numReadWires, numGroundWires],
     }));
-    // Ensure refs are created for the new device
-    interactiveHeatmapRefs.current[newDevice.id] = React.createRef();
-    hiddenFileInputRefs.current[newDevice.id] = React.createRef();
-    hiddenFileInput2Refs.current[newDevice.id] = React.createRef();
-    sensorDivRefs.current[newDevice.id] = React.createRef();
-    // Expand acks array for the new device
+
+    // Ensure refs exist
+    if (!interactiveHeatmapRefs.current[newDevice.id]) {
+      interactiveHeatmapRefs.current[newDevice.id] = React.createRef();
+    }
+    if (!hiddenFileInputRefs.current[newDevice.id]) {
+      hiddenFileInputRefs.current[newDevice.id] = React.createRef();
+    }
+    if (!hiddenFileInput2Refs.current[newDevice.id]) {
+      hiddenFileInput2Refs.current[newDevice.id] = React.createRef();
+    }
+    if (!sensorDivRefs.current[newDevice.id]) {
+      sensorDivRefs.current[newDevice.id] = React.createRef();
+    }
     setAcks(prevAcks => [...prevAcks, false]);
   };
 
@@ -392,17 +542,34 @@ const Home = () => {
           config={WiSensConfig}
           onConnectDevices={onConnectDevices}
           onSave={updateSensorObjects}
-          onLoadConfig={handleFileChange}
+          onLoadConfig={(event) => {
+            if (is3DMode) {
+              handleConfigFileChange(event);
+            } else {
+              handleConfigFileChange(event); // Re-using for now, check its compatibility
+            }
+          }}
           onSelectNodes={onSelectNodesClick}
           onRemoveNodes={onEraseModeClick}
           onAdcMode={onAdcModeClick}
           toggleDrawer={toggleDrawer}
-          connected={acks.every((ack) => ack === true)}
+          connected={Array.isArray(acks) && acks.every((ack) => ack === true)}
           connecting={connecting}
           eraseMode={eraseMode}
           selectMode={selectMode}
           adcMode={adcMode}
+          // NEW PROP FOR TOGGLE
+          onToggle2D3D={toggleHeatmapMode}
+          is3DMode={is3DMode}
         ></Toolbar>
+        {is3DMode && ( // Only render this input if in 3D mode as per your 3D file
+          <input
+            type="file"
+            ref={hiddenFileInputConfigRefs.current['mainConfig']}
+            onChange={handleConfigFileChange}
+            style={{ display: "none" }}
+          />
+        )}
         <div
           style={{
             paddingLeft: "10%",
@@ -410,120 +577,146 @@ const Home = () => {
             fontSize: "large",
           }}
         >
-          {/* <b>{`Step Count: ${stepCount}`}</b> */}
         </div>
         <div className={styles.sensorDiv}>
-          {/* Use sensorConfig directly in map for clarity and correct property access */}
-          {WiSensConfig.sensors.map((sensorConfig) => (
-            <div key={sensorConfig.id} className={styles.heatmapContainer}>
-              <div>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span>
-                        <button
-                          disabled={calibrating}
-                          className={styles.toolbarButton}
-                          onClick={() => {
-                            onCalibrate(sensorConfig.id); // Use sensorConfig.id
-                          }}
-                        >
-                          Calibrate
-                        </button>
-                      </span>
-                    </TooltipTrigger>
-                    {calibrating && (
-                      <TooltipContent>Device is Calibrating</TooltipContent>
-                    )}
-                  </Tooltip>
-                </TooltipProvider>
-                <button
-                  className={styles.toolbarButton}
-                  onClick={() => {
-                    // Ensure the ref exists before calling methods
-                    if (interactiveHeatmapRefs.current[sensorConfig.id]?.current) {
-                      interactiveHeatmapRefs.current[sensorConfig.id].current.setShape();
-                    }
-                  }}
-                >
-                  Toggle Shape
-                </button>
-                <button
-                  className={styles.toolbarButton}
-                  onClick={() => {
-                    if (interactiveHeatmapRefs.current[sensorConfig.id]?.current) {
-                      interactiveHeatmapRefs.current[sensorConfig.id].current.saveLayout();
-                    }
-                  }}
-                >
-                  Save Layout
-                </button>
-                <button
-                  className={styles.toolbarButton}
-                  onClick={() => {
-                    handleClick(hiddenFileInputRefs.current[sensorConfig.id]);
-                  }}
-                >
-                  Load Layout
-                </button>
-                <input
-                  type="file"
-                  ref={hiddenFileInputRefs.current[sensorConfig.id]}
-                  onChange={(event) => {
-                    if (interactiveHeatmapRefs.current[sensorConfig.id]?.current) {
-                      interactiveHeatmapRefs.current[sensorConfig.id].current.loadLayout(event);
-                    }
-                  }}
-                  style={{ display: "none" }}
-                />
-                <button
-                  className={styles.toolbarButton}
-                  onClick={() => {
-                    handleClick(hiddenFileInput2Refs.current[sensorConfig.id]);
-                  }}
-                >
-                  Upload Image
-                </button>
-                <input
-                  type="file"
-                  ref={hiddenFileInput2Refs.current[sensorConfig.id]}
-                  onChange={(event) => {
-                    if (interactiveHeatmapRefs.current[sensorConfig.id]?.current) {
-                      interactiveHeatmapRefs.current[sensorConfig.id].current.uploadBackgroundImage(event);
-                    }
-                  }}
-                  style={{ display: "none" }}
-                />
-                <div
-                  className={styles.sensorTitle}
-                >{`${sensorConfig.deviceName}`}</div>
-              </div>
-              <div
-                ref={sensorDivRefs.current[sensorConfig.id]}
-                className={`${styles.interactiveHeatmapDiv} ${styles.noselect}`}
-              >
-                {/* FIX 1 & 3: Use InteractiveHeatmap3D and wrap data in an array for single layer */}
-                {/* Also, ensure sensors[sensorConfig.id] and sensorDims[sensorConfig.id] exist before rendering */}
-                {sensors[sensorConfig.id] && sensorDims[sensorConfig.id] ? (
-                  <InteractiveHeatmap3D
-                    ref={interactiveHeatmapRefs.current[sensorConfig.id]}
-                    data={[sensors[sensorConfig.id]]} // Wrap 2D data in an array for 3D component
-                    dim={sensorDims[sensorConfig.id]} // Now correctly [cols, rows, 1]
-                    sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
-                    pitch={WiSensConfig.vizOptions.pitch}
-                    selectMode={selectMode}
-                    eraseMode={eraseMode}
-                    setSelectMode={setSelectMode}
-                    showADC={adcMode}
+          {Array.isArray(WiSensConfig.sensors) && WiSensConfig.sensors.length > 0 ? (
+            WiSensConfig.sensors.map((sensorConfig) => (
+              <div key={sensorConfig.id} className={styles.heatmapContainer}>
+                <div>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <button
+                            disabled={calibrating}
+                            className={styles.toolbarButton}
+                            onClick={() => {
+                              onCalibrate(sensorConfig.id);
+                            }}
+                          >
+                            Calibrate
+                          </button>
+                        </span>
+                      </TooltipTrigger>
+                      {calibrating && (
+                        <TooltipContent>Device is Calibrating</TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                  <button
+                    className={styles.toolbarButton}
+                    onClick={() => {
+                      if (interactiveHeatmapRefs.current[sensorConfig.id]?.current) {
+                        interactiveHeatmapRefs.current[sensorConfig.id].current.setShape();
+                      } else {
+                        console.warn(`Cannot setShape for sensor ${sensorConfig.id}: interactiveHeatmapRef is not ready.`);
+                      }
+                    }}
+                  >
+                    Toggle Shape
+                  </button>
+                  <button
+                    className={styles.toolbarButton}
+                    onClick={() => {
+                      if (interactiveHeatmapRefs.current[sensorConfig.id]?.current) {
+                        interactiveHeatmapRefs.current[sensorConfig.id].current.saveLayout();
+                      } else {
+                        console.warn(`Cannot saveLayout for sensor ${sensorConfig.id}: interactiveHeatmapRef is not ready.`);
+                      }
+                    }}
+                  >
+                    Save Layout
+                  </button>
+                  <button
+                    className={styles.toolbarButton}
+                    onClick={() => {
+                      if (hiddenFileInputRefs.current[sensorConfig.id]) {
+                        handleClick(hiddenFileInputRefs.current[sensorConfig.id]);
+                      } else {
+                        console.warn(`Cannot load layout for sensor ${sensorConfig.id}: Hidden file input ref is not set.`);
+                      }
+                    }}
+                  >
+                    Load Layout
+                  </button>
+                  <input
+                    type="file"
+                    ref={hiddenFileInputRefs.current[sensorConfig.id]}
+                    onChange={(event) => {
+                      handleLayoutFileChange(event, sensorConfig.id);
+                    }}
+                    style={{ display: "none" }}
                   />
-                ) : (
-                  <div>Loading sensor data...</div> // Fallback while data is not ready
-                )}
+                  <button
+                    className={styles.toolbarButton}
+                    onClick={() => {
+                      if (hiddenFileInput2Refs.current[sensorConfig.id]) {
+                        handleClick(hiddenFileInput2Refs.current[sensorConfig.id]);
+                      } else {
+                        console.warn(`Cannot upload image for sensor ${sensorConfig.id}: Hidden file input ref (for image) is not set.`);
+                      }
+                    }}
+                  >
+                    Upload Image
+                  </button>
+                  <input
+                    type="file"
+                    ref={hiddenFileInput2Refs.current[sensorConfig.id]}
+                    onChange={(event) => {
+                      if (interactiveHeatmapRefs.current[sensorConfig.id]?.current) {
+                        interactiveHeatmapRefs.current[sensorConfig.id].current.uploadBackgroundImage(event);
+                      } else {
+                        console.warn(`Cannot uploadBackgroundImage for sensor ${sensorConfig.id}: interactiveHeatmapRef is not ready.`);
+                      }
+                    }}
+                    style={{ display: "none" }}
+                  />
+                  <div
+                    className={styles.sensorTitle}
+                  >{`${sensorConfig.deviceName}`}</div>
+                </div>
+                <div
+                  ref={sensorDivRefs.current[sensorConfig.id]}
+                  className={`${styles.interactiveHeatmapDiv} ${styles.noselect}`}
+                >
+                  {sensors[sensorConfig.id] && sensorDims[sensorConfig.id] ? (
+                    is3DMode ? (
+                      <InteractiveHeatmap3D
+                        ref={interactiveHeatmapRefs.current[sensorConfig.id]}
+                        data={[sensors[sensorConfig.id]]} // 3D takes data as an array of layers
+                        dim={sensorDims[sensorConfig.id]}
+                        sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
+                        pitch={WiSensConfig.vizOptions?.pitch}
+                        selectMode={selectMode}
+                        eraseMode={eraseMode}
+                        setSelectMode={setSelectMode}
+                        showADC={adcMode}
+                        customLayout={loadedLayouts[sensorConfig.id]} // Pass 3D specific layout
+                      />
+                    ) : (
+                      <InteractiveHeatmap2D
+                        ref={interactiveHeatmapRefs.current[sensorConfig.id]}
+                        data={sensors[sensorConfig.id]} // 2D takes data directly
+                        dim={sensorDims[sensorConfig.id]}
+                        sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
+                        pitch={WiSensConfig.vizOptions?.pitch} // Check if pitch is used in 2D
+                        selectMode={selectMode}
+                        eraseMode={eraseMode}
+                        setSelectMode={setSelectMode}
+                        showADC={adcMode}
+                      />
+                    )
+                  ) : (
+                    <div>Loading sensor data...</div>
+                  )}
+                </div>
               </div>
+            ))
+          ) : (
+            <div style={{ padding: '20px', textAlign: 'center' }}>
+              No sensors configured. Add a new device to get started!
             </div>
-          ))}
-          {/* Add a button for adding new devices (if not already handled in AppSidebar) */}
-           {/* Removed Add New Device button as requested */}
+          )}
         </div>
       </div>
       <AppSidebar
@@ -531,8 +724,8 @@ const Home = () => {
         handleDeleteDevice={handleDeleteDevice}
         updateSensorObjects={updateSensorObjects}
         socket={socket}
-        connected={acks.every((ack) => ack === true)}
-        handleAddDevice={handleAddDevice} // Pass handleAddDevice to AppSidebar
+        connected={Array.isArray(acks) && acks.every((ack) => ack === true)}
+        handleAddDevice={handleAddDevice}
       />
     </SidebarProvider>
   );
