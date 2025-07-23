@@ -3,6 +3,9 @@
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { io } from "socket.io-client";
 import dynamic from "next/dynamic";
+import weightMappingsSmall from './point_weight_mappings_small.json';
+import weightMappingsLarge from "./point_weight_mappings_large.json";
+
 
 // Import both heatmap components after you've renamed them
 // Adjust paths based on where you put them (e.g., in a 'components' folder)
@@ -14,6 +17,15 @@ const InteractiveHeatmap2D = dynamic(
   }),
   { ssr: false }
 );
+
+const InteractiveHeatmapHand = dynamic(
+  () => import("./interactiveheatmaphand.jsx").then(mod => {
+    console.log('InteractiveHeatmapHand mod.default:', mod.default); // Debugging line
+    return mod.default;
+  }),
+  { ssr: false }
+);
+
 const InteractiveHeatmap3D = dynamic(
   () => import("./interactiveheatmap_3D.jsx").then(mod => {
     console.log('InteractiveHeatmap3D mod.default:', mod.default); // Debugging line
@@ -52,10 +64,16 @@ const generateRandomArray = (rows, cols) => {
   return array;
 };
 
-const Home = () => {
-  // NEW STATE FOR TOGGLE
-  const [is3DMode, setIs3DMode] = useState(false); // Start in 2D mode by default? Or based on config?
+const VizState = Object.freeze({
+  DEFAULT: true,
+  GLOVE: false
+});
 
+const Home = () => {
+
+
+  // NEW STATE FOR TOGGLE
+  const [vizMode, setVizMode] = useState(defaultWiReSensConfig.vizOptions.glove? VizState.GLOVE:VizState.DEFAULT); 
   const [WiSensConfig, setWiSensConfig] = useState(defaultWiReSensConfig);
   const [selectMode, setSelectMode] = useState(false);
   const [eraseMode, setEraseMode] = useState(false);
@@ -90,7 +108,7 @@ const Home = () => {
     if (WiSensConfig && Array.isArray(WiSensConfig.sensors)) {
       WiSensConfig.sensors.forEach((sensorConfig) => {
         let numReadWires, numGroundWires;
-        if (is3DMode) {
+        if (vizMode == VizState.GLOVE) {
           numReadWires = HIGH_DEF_ROWS;
           numGroundWires = HIGH_DEF_COLS;
           currentDefaultDims[sensorConfig.id] = [numGroundWires, numReadWires, 1]; // 3D dim
@@ -109,9 +127,9 @@ const Home = () => {
         sensorDivRefs.current[sensorConfig.id] = sensorDivRefs.current[sensorConfig.id] || React.createRef();
 
         // Only create config ref if it's the main config (from 3D)
-        if (is3DMode && !hiddenFileInputConfigRefs.current['mainConfig']) {
-          hiddenFileInputConfigRefs.current['mainConfig'] = React.createRef();
-        }
+        // if (is3DMode && !hiddenFileInputConfigRefs.current['mainConfig']) {
+        //   hiddenFileInputConfigRefs.current['mainConfig'] = React.createRef();
+        // }
       });
     } else {
       console.warn("WiSensConfig.sensors is undefined or not an array. Initializing with empty sensor data.");
@@ -122,7 +140,7 @@ const Home = () => {
     setSensorDims(currentDefaultDims);
     // Ensure acks state is also updated if config changes, as its length depends on WiSensConfig.sensors
     setAcks(Array(Array.isArray(WiSensConfig.sensors) ? WiSensConfig.sensors.length : 0).fill(false));
-  }, [is3DMode, WiSensConfig.sensors]); // Added WiSensConfig.sensors to dependencies
+  }, [vizMode, WiSensConfig.sensors]); // Added WiSensConfig.sensors to dependencies
 
   const lastSensorDataUpdateTime = useRef(0);
   const THROTTLE_DELAY_MS = 50;
@@ -140,9 +158,8 @@ const Home = () => {
   };
 
   const toggleHeatmapMode = useCallback(() => {
-    setIs3DMode(prevMode => {
+    setVizMode(prevMode => {
       const newMode = !prevMode;
-      console.log(`Heatmap mode toggled to: ${newMode ? '3D' : '2D'}`);
       return newMode;
     });
     // When switching modes, clear current sensor data and dims
@@ -164,7 +181,7 @@ const Home = () => {
 
     config.sensors.forEach((sensorConfig) => {
       let numReadWires, numGroundWires;
-      if (is3DMode) {
+      if (vizMode == VizState.GLOVE) {
         numReadWires = HIGH_DEF_ROWS;
         numGroundWires = HIGH_DEF_COLS;
         updatedDims[sensorConfig.id] = [numGroundWires, numReadWires, 1]; // 3D dim
@@ -192,9 +209,9 @@ const Home = () => {
         sensorDivRefs.current[sensorConfig.id] = React.createRef();
       }
       // Only create config ref if it's the main config (from 3D)
-      if (is3DMode && !hiddenFileInputConfigRefs.current['mainConfig']) {
-        hiddenFileInputConfigRefs.current['mainConfig'] = React.createRef();
-      }
+      // if (is3DMode && !hiddenFileInputConfigRefs.current['mainConfig']) {
+      //   hiddenFileInputConfigRefs.current['mainConfig'] = React.createRef();
+      // }
     });
 
     setSensorDims(updatedDims);
@@ -211,6 +228,7 @@ const Home = () => {
         try {
           const parsedConfig = JSON.parse(e.target.result);
           if (parsedConfig && Array.isArray(parsedConfig.sensors)) {
+            setVizMode(parsedConfig.vizOptions.glove? VizState.GLOVE:VizState.DEFAULT);
             updateSensorObjects(parsedConfig);
             console.log("Main configuration loaded successfully.");
           } else {
@@ -234,25 +252,13 @@ const Home = () => {
     reader.onload = (e) => {
       try {
         const loadedLayoutData = JSON.parse(e.target.result);
-        if (is3DMode) { // Specific check for 3D layout structure
-          if (loadedLayoutData.cellPositions && loadedLayoutData.erasedNodes !== undefined) {
-              setLoadedLayouts(prev => ({
-                  ...prev,
-                  [sensorId]: loadedLayoutData
-              }));
-              console.log(`Layout data for sensor ${sensorId} queued.`);
-          } else {
-              console.error("Error: Parsed layout file does not have the expected 'cellPositions' or 'erasedNodes'.");
-              alert("Failed to parse layout file. Please ensure it's a valid layout JSON for 3D.");
-          }
-        } else { // 2D layout structure might be different, or handled within InteractiveHeatmap2D
           if (interactiveHeatmapRefs.current[sensorId]?.current) {
             interactiveHeatmapRefs.current[sensorId].current.loadLayout(event); // Assume 2D component handles event
           } else {
             console.warn(`Cannot load layout for sensor ${sensorId}: interactiveHeatmapRef is not ready (2D mode).`);
           }
         }
-      } catch (error) {
+      catch (error) {
         console.error("Error parsing layout file:", error);
         alert("Failed to parse layout file. Please ensure it's valid JSON.");
       }
@@ -303,42 +309,71 @@ const Home = () => {
             console.warn(`Sensor data for ID ${sensorId} is malformed or empty.`);
             continue;
           }
+         if (vizMode == VizState.GLOVE) {
 
-          if (is3DMode) {
-            const incomingRows = incomingLayerData.length;
-            const incomingCols = incomingLayerData[0] ? incomingLayerData[0].length : 0;
+            const defaultNAValue = 3072;
+
             const newSensorData = generateRandomArray(HIGH_DEF_ROWS, HIGH_DEF_COLS);
+            const sensorConfig = WiSensConfig.sensors.find(s => s.id == sensorId);
+            const left = sensorConfig?.glove === 'left';
+            const small = sensorConfig?.size === 'small';
 
             for (let r = 0; r < HIGH_DEF_ROWS; r++) {
               for (let c = 0; c < HIGH_DEF_COLS; c++) {
-                const srcX = (c / (HIGH_DEF_COLS - 1)) * (incomingCols - 1);
-                const srcY = (r / (HIGH_DEF_ROWS - 1)) * (incomingRows - 1);
+                const label = left? `${r}-${c}`: `${(HIGH_DEF_COLS-1)-c}-${(HIGH_DEF_ROWS-1)-r}`;
+                
+                const mapping =  small? weightMappingsSmall[label]: weightMappingsLarge[label];
 
-                const x1 = Math.floor(srcX);
-                const y1 = Math.floor(srcY);
+                if (!mapping) {
 
-                const x2 = Math.min(x1 + 1, incomingCols - 1);
-                const y2 = Math.min(y1 + 1, incomingRows - 1);
+                  left? newSensorData[r][c]=0: newSensorData[(HIGH_DEF_COLS-1)-c][(HIGH_DEF_ROWS-1)-r] = 0;
+                  continue;
+                }
 
-                const fx = srcX - x1;
-                const fy = srcY - y1;
+                let weightedSum = 0;
+                let totalWeight = 0;
 
-                const q11 = (incomingLayerData[y1] && incomingLayerData[y1][x1] !== undefined) ? incomingLayerData[y1][x1] : 0;
-                const q12 = (incomingLayerData[y1] && incomingLayerData[y1][x2] !== undefined) ? incomingLayerData[y1][x2] : 0;
-                const q21 = (incomingLayerData[y2] && incomingLayerData[y2][x1] !== undefined) ? incomingLayerData[y2][x1] : 0;
-                const q22 = (incomingLayerData[y2] && incomingLayerData[y2][x2] !== undefined) ? incomingLayerData[y2][x2] : 0;
+                for (const quadrant of ['NE', 'NW', 'SW', 'SE']) {
+                  const [sourceId, distance] = mapping[quadrant];
 
-                const interpolatedValue =
-                  q11 * (1 - fx) * (1 - fy) +
-                  q12 * fx * (1 - fy) +
-                  q21 * (1 - fx) * fy +
-                  q22 * fx * fy;
+                  let value;
+                  if (sourceId !== 'N/A') {
+                    const [yStr, xStr] = sourceId.split('-');
+                    const y = left? parseInt(yStr, 10): 15-parseInt(xStr, 10);
+                    const x = left? parseInt(xStr, 10): 15-parseInt(yStr, 10);
 
-                newSensorData[r][c] = interpolatedValue;
-              }
+                    // Defensive check for bounds and existence
+                    if (
+                      incomingLayerData[y] !== undefined &&
+                      incomingLayerData[y][x] !== undefined
+                    ) {
+                      value = incomingLayerData[y][x];
+                    } else {
+                      value = defaultNAValue;
+                    }
+                  } else {
+                    value = defaultNAValue;
+                  }
+
+                  const weight = (distance !== null && distance > 0.001) ? 1 / distance : 1e6;
+
+                  weightedSum += value * weight;
+                  totalWeight += weight;
+                }
+
+                if (left) {
+                  newSensorData[r][c] = totalWeight > 0 ? weightedSum / totalWeight : 0;
+                } else {
+                  newSensorData[(HIGH_DEF_COLS-1)-c][(HIGH_DEF_ROWS-1)-r] = totalWeight > 0 ? weightedSum / totalWeight : 0;
+                }
+
+                }
+                
             }
+
             updatedSensors[sensorId] = newSensorData;
-          } else { // 2D mode, direct assignment
+
+          } else {
             updatedSensors[sensorId] = incomingLayerData;
           }
         }
@@ -407,7 +442,7 @@ const Home = () => {
     return () => {
       newSocket.disconnect();
     };
-  }, [WiSensConfig.vizOptions?.localIp, WiSensConfig.sensors, is3DMode]);
+  }, [WiSensConfig.vizOptions?.localIp, WiSensConfig.sensors, vizMode]);
 
   useEffect(() => {
     if (Array.isArray(WiSensConfig.sensors) && WiSensConfig.sensors.length > 0 && acks.every((ack) => ack === true)) {
@@ -439,14 +474,56 @@ const Home = () => {
     if (socket) socket.emit("calibrate", sensorId);
   };
 
-  const onPlay = (settings) => {
+  const onPlay = async (settings) => {
     console.log("start replay");
     if (socket) socket.emit("replay", settings);
+    // Start screen recording
+    // try {
+    //   const stream = await navigator.mediaDevices.getDisplayMedia({
+    //     video: { mediaSource: "screen" },
+    //     audio: false, // Change to true if needed
+    //   });
+
+    //   recordedChunks = [];
+    //   mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm" });
+
+    //   mediaRecorder.ondataavailable = (event) => {
+    //     if (event.data.size > 0) {
+    //       recordedChunks.push(event.data);
+    //     }
+    //   };
+
+    //   mediaRecorder.start();
+    //   console.log("[🎥] Recording started");
+    // } catch (err) {
+    //   console.error("[⚠️] Screen recording failed:", err);
+    // }
   };
 
   const onPause = () => {
     console.log("stop replay");
     if (socket) socket.emit("stopViz");
+  //   if (mediaRecorder && mediaRecorder.state !== "inactive") {
+  //   mediaRecorder.stop();
+
+  //   mediaRecorder.onstop = () => {
+  //     const blob = new Blob(recordedChunks, { type: "video/webm" });
+  //     const url = URL.createObjectURL(blob);
+
+  //     // Trigger download
+  //     const a = document.createElement("a");
+  //     a.href = url;
+  //     a.download = "screen_recording.webm";
+  //     a.click();
+
+  //     // Cleanup
+  //     URL.revokeObjectURL(url);
+  //     mediaRecorder = null;
+  //     recordedChunks = [];
+
+  //     console.log("[💾] Downloaded screen_recording.webm");
+  //   };
+  // }
   };
 
   const toggleDrawer = () => setOpen(!open);
@@ -499,7 +576,7 @@ const Home = () => {
     });
 
     let numReadWires, numGroundWires;
-    if (is3DMode) {
+    if (vizMode == vizOptions.GLOVE) {
       numReadWires = HIGH_DEF_ROWS;
       numGroundWires = HIGH_DEF_COLS;
     } else {
@@ -513,7 +590,7 @@ const Home = () => {
     }));
     setSensorDims((prev) => ({
       ...prev,
-      [newDevice.id]: is3DMode ? [numGroundWires, numReadWires, 1] : [numReadWires, numGroundWires],
+      [newDevice.id]: (vizMode == vizOptions.GLOVE) ? [numGroundWires, numReadWires, 1] : [numReadWires, numGroundWires],
     }));
 
     // Ensure refs exist
@@ -543,11 +620,7 @@ const Home = () => {
           onConnectDevices={onConnectDevices}
           onSave={updateSensorObjects}
           onLoadConfig={(event) => {
-            if (is3DMode) {
-              handleConfigFileChange(event);
-            } else {
               handleConfigFileChange(event); // Re-using for now, check its compatibility
-            }
           }}
           onSelectNodes={onSelectNodesClick}
           onRemoveNodes={onEraseModeClick}
@@ -560,16 +633,8 @@ const Home = () => {
           adcMode={adcMode}
           // NEW PROP FOR TOGGLE
           onToggle2D3D={toggleHeatmapMode}
-          is3DMode={is3DMode}
+          vizMode={vizMode}
         ></Toolbar>
-        {is3DMode && ( // Only render this input if in 3D mode as per your 3D file
-          <input
-            type="file"
-            ref={hiddenFileInputConfigRefs.current['mainConfig']}
-            onChange={handleConfigFileChange}
-            style={{ display: "none" }}
-          />
-        )}
         <div
           style={{
             paddingLeft: "10%",
@@ -679,22 +744,8 @@ const Home = () => {
                   ref={sensorDivRefs.current[sensorConfig.id]}
                   className={`${styles.interactiveHeatmapDiv} ${styles.noselect}`}
                 >
-                  {sensors[sensorConfig.id] && sensorDims[sensorConfig.id] ? (
-                    is3DMode ? (
-                      <InteractiveHeatmap3D
-                        ref={interactiveHeatmapRefs.current[sensorConfig.id]}
-                        data={[sensors[sensorConfig.id]]} // 3D takes data as an array of layers
-                        dim={sensorDims[sensorConfig.id]}
-                        sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
-                        pitch={WiSensConfig.vizOptions?.pitch}
-                        selectMode={selectMode}
-                        eraseMode={eraseMode}
-                        setSelectMode={setSelectMode}
-                        showADC={adcMode}
-                        customLayout={loadedLayouts[sensorConfig.id]} // Pass 3D specific layout
-                      />
-                    ) : (
-                      <InteractiveHeatmap2D
+                  {sensors[sensorConfig.id] && sensorDims[sensorConfig.id] ? ((vizMode == VizState.GLOVE)? (
+                      <InteractiveHeatmapHand
                         ref={interactiveHeatmapRefs.current[sensorConfig.id]}
                         data={sensors[sensorConfig.id]} // 2D takes data directly
                         dim={sensorDims[sensorConfig.id]}
@@ -704,8 +755,21 @@ const Home = () => {
                         eraseMode={eraseMode}
                         setSelectMode={setSelectMode}
                         showADC={adcMode}
+                        isLeft = {sensorConfig?.glove == "left"}
+                        isSmall = {sensorConfig?.size == "small"}
                       />
-                    )
+                      
+                    ) : (<InteractiveHeatmap2D
+                        ref={interactiveHeatmapRefs.current[sensorConfig.id]}
+                        data={sensors[sensorConfig.id]} // 2D takes data directly
+                        dim={sensorDims[sensorConfig.id]}
+                        sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
+                        pitch={WiSensConfig.vizOptions?.pitch} // Check if pitch is used in 2D
+                        selectMode={selectMode}
+                        eraseMode={eraseMode}
+                        setSelectMode={setSelectMode}
+                        showADC={adcMode}
+                      />)
                   ) : (
                     <div>Loading sensor data...</div>
                   )}

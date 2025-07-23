@@ -58,7 +58,7 @@ const InteractiveHeatmap3D = forwardRef(
     const minScaleFactorZ = 0.01;
     const maxScaleFactorZ = 5.0;
 
-    const MAX_PRESSURE_VALUE = 2500;
+    const MAX_PRESSURE_VALUE = 3000;
     const MIN_PRESSURE_VALUE = 0;
 
     const [numCols, numRows, numLayers] = dim;

@@ -29,11 +29,12 @@ const Toolbar = ({
   adcMode,
   // NEW: Add onToggle2D3D and is3DMode to the props
   onToggle2D3D, // This function will be passed from page.jsx
-  is3DMode,     // This boolean will tell us the current display mode
+  vizMode,     // This boolean will tell us the current display mode
 }) => {
   const hiddenFileInputConfig = useRef(null);
 
   const handleConfigClick = (event) => {
+    hiddenFileInputConfig.current.value = null;
     hiddenFileInputConfig.current.click();
   };
 
@@ -108,7 +109,7 @@ const Toolbar = ({
       <Button
         onClick={onToggle2D3D} // Call the function passed from page.jsx
       >
-        Toggle {is3DMode ? '2D' : '3D'} {/* Dynamically change button text */}
+        Toggle {vizMode ? 'Glove' : 'Default'} {/* Dynamically change button text */}
       </Button>
 
       <Button
