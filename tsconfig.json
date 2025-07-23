@@ -28,7 +28,7 @@
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    "app/interactiveheatmap.jsx",
+    "app/interactiveheatmap_3D.jsx",
     "app/layout.jsx",
     "app/page.jsx"
   ],

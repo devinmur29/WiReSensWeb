@@ -15,6 +15,8 @@ const ResizableBox = dynamic(() => import("react-resizable").then(mod => mod.Res
 
 import Colorbar from "./colorbar";
 import "react-resizable/css/styles.css"; // Ensure this CSS is globally available or imported correctly
+import VoronoiRegionsSmall from "./VoronoiRegionsSmall"
+import VoronoiRegionsLarge from "./VoronoiRegionsLarge"
 
 const InteractiveHeatmap = forwardRef(
   (
@@ -27,6 +29,8 @@ const InteractiveHeatmap = forwardRef(
       eraseMode,
       setSelectMode,
       showADC,
+      isLeft,
+      isSmall
     },
     ref
   ) => {
@@ -49,6 +53,7 @@ const InteractiveHeatmap = forwardRef(
     const marginNodes = 2; //Number of nodes to leave for "dragging room" on top and bottom of heatmap
 
     const [cellSize, setCellSize] = useState(0);
+    const svgRef = useRef(null);
 
     // Recalculate cellSize and templateDimensions on dim or sensorDivRef changes
     useEffect(() => {
@@ -335,11 +340,33 @@ const InteractiveHeatmap = forwardRef(
       }
     };
 
-    const getColor = (value) => {
-      const clampedValue = Math.max(0, Math.min(value, 4095));
-      const hue = (1 - clampedValue / 4095) * 240;
+    const MAX_PRESSURE_VALUE = 3000;
+    const MIN_PRESSURE_VALUE = 0;
+    
+    const getColor = useCallback((value) => {
+      const effectiveMinForColoring = MIN_PRESSURE_VALUE; // Start mapping colors from 0
+
+      const clampedValue = Math.max(MIN_PRESSURE_VALUE, Math.min(value, MAX_PRESSURE_VALUE));
+      const valueForColorCalculation = Math.max(effectiveMinForColoring, clampedValue);
+
+      const normalizedForColor = (valueForColorCalculation - effectiveMinForColoring) / (MAX_PRESSURE_VALUE - effectiveMinForColoring);
+
+      const hue = (1 - normalizedForColor) * 240 - 0.001; // Blue (0) to Red (240) based on value
+
       return `hsl(${hue}, 100%, 50%)`;
-    };
+    }, [MIN_PRESSURE_VALUE, MAX_PRESSURE_VALUE]);
+
+    useEffect(() => {
+    data.forEach((row, rowIndex) => {
+      row.forEach((value, colIndex) => {
+        const id = `${rowIndex}-${colIndex}`;
+        const region = containerRef.current.querySelector(`#${CSS.escape(id)}`);
+        if (region) {
+          region.setAttribute("fill", getColor(value));
+        }
+      });
+    });
+  }, [data]);
 
     const onDragStart = (e) => {
       e.preventDefault();
@@ -393,95 +420,12 @@ const InteractiveHeatmap = forwardRef(
       >
         {selectMode && bboxStart && bboxEnd && <div style={getBoundingBoxStyle()} />}
         <Colorbar></Colorbar>
-        {data.map((row, rowIndex) => (
-          <div key={rowIndex} className={`row`}> {/* Assuming styles.row is just 'row' class */}
-            {row.map((value, colIndex) => {
-              const position = positions[`${rowIndex}-${colIndex}`];
-              const nodeId = `${rowIndex}-${colIndex}`;
-
-              if (!position) return null;
-
-              return (
-                <div
-                  key={colIndex}
-                  className={`cell`} // Assuming styles.cell is just 'cell' class
-                  style={{
-                    backgroundColor:
-                      draggedNodes && draggedNodes.includes(nodeId)
-                        ? "aquamarine"
-                        : getColor(value),
-                    position: "absolute",
-                    left: position.x,
-                    top: position.y,
-                    zIndex:
-                      draggedNodes && draggedNodes.includes(nodeId) ? 1000 : 2,
-                    cursor: dragging ? "grabbing" : (selectMode ? "crosshair" : (draggedNodes && draggedNodes.includes(nodeId) ? "grab" : "default")),
-                    width: cellSize,
-                    height: cellSize,
-                    fontSize: cellSize > 40 ? cellSize - 40 : '0.8em',
-                    borderRadius: isCircle ? "50%" : "0px",
-                    display:
-                      erasedNodes && erasedNodes.includes(nodeId)
-                        ? "none"
-                        : "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: (draggedNodes && draggedNodes.includes(nodeId)) ? "2px solid aquamarine" : "none",
-                    boxSizing: 'border-box',
-                    transition: 'background-color 0.1s ease, border 0.1s ease',
-                  }}
-                  onMouseDown={(e) =>
-                    handleMouseDownCell(rowIndex, colIndex, e)
-                  }
-                  onMouseEnter={(e) => {
-                    if (!selectMode && !dragging) {
-                        e.currentTarget.style.border = "1px solid black";
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!selectMode && !dragging) {
-                        e.currentTarget.style.border = "none";
-                    }
-                  }}
-                  draggable
-                  onDragStart={onDragStart}
-                  onDrop={onDrop}
-                >
-                  {showADC && <span>{Math.round(value)}</span>}
-                </div>
-              );
-            })}
+        <div style={{width: '100%', height: '500px', aspectRatio: 573.7 / 791.9 }}>
+          <div style={{ transform: isLeft ? 'scaleX(-1)' : 'none', width: '100%', height: '100%' }}>
+            {isSmall? <VoronoiRegionsSmall /> : <VoronoiRegionsLarge />}
           </div>
-        ))}
-        {outlineImage && (
-          <ResizableBox
-            style={{
-              position: "absolute",
-              top: templateOffset.top,
-              left: templateOffset.left,
-              zIndex: 1,
-              userSelect: "none",
-              display: (dim && dim[0] > 0 && dim[1] > 0) ? 'block' : 'none',
-            }}
-            width={templateDimensions.width}
-            height={templateDimensions.height}
-            onResize={onResize}
-            resizeHandles={["nw", "ne", "sw", "se"]}
-          >
-            <img
-              className={`noselect`} // Assuming styles.noselect is just 'noselect' class
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "contain",
-                position: "absolute",
-                zIndex: -1,
-              }}
-              src={outlineImage}
-              alt="Heatmap background"
-            ></img>
-          </ResizableBox>
-        )}
+        </div>
+        
       </div>
     );
   }

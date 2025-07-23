@@ -1,55 +1,59 @@
 const defaultWiReSensConfig = {
-  wifiOptions: {
-    tcp_ip: "",
-    port: 7001,
-    numNodes: 120,
-    ssid: "StataCenter",
-    password: "",
+  "wifiOptions": {
+    "tcp_ip": "",
+    "port": 7001,
+    "numNodes": 120,
+    "ssid": "MLDEV",
+    "password": ""
   },
 
-  readoutOptions: {
-    groundPins: [26, 25, 4, 21, 12],
-    readPins: [27, 33, 15, 32, 14],
-    adcPin: 34,
+  "readoutOptions": {
+    "groundPins": [18, 17, 8, 43, 12],
+    "readPins": [11, 10, 9, 6, 5],
+    "adcPin": 34
   },
 
-  sensors: [
+  "sensors": [
     {
-      id: 1,
-      protocol: "ble",
-      serialPort: "COM5",
-      deviceName: "Esp1",
-      startCoord: [0, 0],
-      endCoord: [7, 7],
-      resistance: 25,
-      intermittent: {
-        enabled: false,
-        p: 21,
-        d: 46,
+      "id": 1,
+      "protocol": "serial",
+      "serialPort": "COM16",
+      "deviceName": "Esp1",
+      "startCoord": [0, 0],
+      "endCoord": [15, 15],
+      "resistance": 3,
+      "intermittent": {
+        "enabled": false,
+        "p": 21,
+        "d": 46
       },
-      outlineImage: "",
-      saturatedPercentage: 1,
-      duration: 30000,
-    },
+      "outlineImage": "",
+      "saturatedPercentage": 1,
+      "duration": 15000,
+    }
   ],
 
-  serialOptions: {
-    baudrate: 250000,
-    numNodes: 120,
+  "serialOptions": {
+    "baudrate": 250000,
+    "numNodes": 120
   },
 
-  bleOptions: {
-    numNodes: 120,
+  "bleOptions": {
+    "numNodes": 120
   },
 
-  espOptions: {
-    macAddress: [160, 163, 179, 144, 124, 188],
+  "espOptions": {
+    "macAddress": [160, 163, 179, 144, 124, 188]
   },
 
-  vizOptions: {
-    pitch: 13,
-    localIp: "",
-  },
-};
+  "vizOptions": {
+    "pitch": 10,
+    "glove": false,
+    "localIp": ""
+  }
+}
+
+
+
 
 export default defaultWiReSensConfig;

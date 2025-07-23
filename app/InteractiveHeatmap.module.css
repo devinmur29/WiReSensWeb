@@ -1,27 +1,34 @@
-.heatmap {
+/* interactiveHeatmap.module.css (Adapted for 3D) */
+
+.heatmapContainer {
+  /* This will be the wrapper for your Three.js canvas */
   position: relative;
   width: 100%;
-  height: 95%;
-}
-
-.row {
-  display: flex;
-}
-
-.cell {
-  border: 1px solid transparent;
-  position: absolute;
-  cursor: grab;
-  z-index: 2;
-  /* border-radius: 50%; */
+  height: 95%; /* Adjust as needed for your layout */
+  overflow: hidden; /* Important to prevent scrollbars if canvas is slightly larger */
+  /* You might add a background color here if the Three.js renderer's alpha is 0 */
+  background-color: transparent; /* Or a specific color */
 }
 
 .noselect {
-  user-select: none; /* Standard syntax */
-  -webkit-user-select: none; /* Safari */
-  -moz-user-select: none; /* Firefox */
-  -ms-user-select: none; /* Internet Explorer/Edge */
-  -webkit-user-drag: none; /* Chrome, Safari, Opera */
-  -moz-user-drag: none; /* Firefox */
-  -ms-user-drag: none; /* Internet Explorer and Edge */
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  -webkit-user-drag: none;
+  -moz-user-drag: none;
+  -ms-user-drag: none;
+}
+
+/* New style for the ADC labels (used by CSS2DObject) */
+.adcLabel {
+  color: black; /* Or any color that stands out */
+  font-size: 0.8em; /* Adjust size based on your cell scale */
+  font-family: sans-serif;
+  text-align: center;
+  background-color: rgba(255, 255, 255, 0.7); /* Semi-transparent background for readability */
+  padding: 2px 4px;
+  border-radius: 3px;
+  pointer-events: none; /* Crucial so clicks pass through to the Three.js canvas */
+  white-space: nowrap; /* Prevent text wrapping */
 }
