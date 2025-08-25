@@ -8,7 +8,7 @@ export function WiFiSettings({ config, onSave }) {
   const [wifiConfig, setWiFiConfig] = useState(config.wifiOptions);
   const [serialConfig, setSerialConfig] = useState(config.serialOptions);
   const [bleConfig, setBleConfig] = useState(config.bleOptions);
-  const [espConfig, setEspConfig] = useState(config.espOptions);
+  const [espConfig, setEspConfig] = useState(config.espnowOptions);
   const [protocol, setProtocol] = useState(config.sensors[0].protocol);
 
   // Handle changes to Wi-Fi options
@@ -173,7 +173,7 @@ export function WiFiSettings({ config, onSave }) {
             wifiOptions: wifiConfig,
             serialOptions: serialConfig,
             bleOptions: bleConfig,
-            espOptions: espConfig,
+            espnowOptions: espConfig,
           })
         }
       >

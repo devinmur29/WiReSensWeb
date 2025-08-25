@@ -42,7 +42,7 @@ const defaultWiReSensConfig = {
     "numNodes": 120
   },
 
-  "espOptions": {
+  "espnowOptions": {
     "macAddress": [160, 163, 179, 144, 124, 188]
   },
 
