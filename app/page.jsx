@@ -34,6 +34,11 @@ const InteractiveHeatmap3D = dynamic(
   { ssr: false }
 );
 
+const SensorMapper = dynamic(
+  () => import("./SensorMapper.jsx"),
+  { ssr: false }
+);
+
 import Toolbar from "./toolbar"; // Your existing toolbar
 import styles from "./page.module.css";
 import defaultWiReSensConfig from "./constants";
@@ -65,15 +70,16 @@ const generateRandomArray = (rows, cols) => {
 };
 
 const VizState = Object.freeze({
-  DEFAULT: true,
-  GLOVE: false
+  GRID: 'GRID',
+  HAND_2D: 'HAND_2D',
+  HAND_3D: 'HAND_3D'
 });
 
 const Home = () => {
 
 
   // NEW STATE FOR TOGGLE
-  const [vizMode, setVizMode] = useState(defaultWiReSensConfig.vizOptions.glove? VizState.GLOVE:VizState.DEFAULT); 
+  const [vizMode, setVizMode] = useState(defaultWiReSensConfig.vizOptions.glove ? VizState.HAND_2D : VizState.GRID);
   const [WiSensConfig, setWiSensConfig] = useState(defaultWiReSensConfig);
   const [selectMode, setSelectMode] = useState(false);
   const [eraseMode, setEraseMode] = useState(false);
@@ -90,6 +96,8 @@ const Home = () => {
   const [calibrating, setCalibrating] = useState(false);
   const [loadedLayouts, setLoadedLayouts] = useState({}); // From 3D code
 
+  const [showSensorMapping, setShowSensorMapping] = useState(false);
+  const [showMapperTool, setShowMapperTool] = useState(false);
   // FIX: Define acks state here
   const initialAcksLength = Array.isArray(defaultWiReSensConfig.sensors) ? defaultWiReSensConfig.sensors.length : 0;
   const [acks, setAcks] = useState(Array(initialAcksLength).fill(false));
@@ -99,6 +107,7 @@ const Home = () => {
   // by the useEffect below based on WiSensConfig.sensors and is3DMode.
   const [sensors, setSensors] = useState({});
   const [sensorDims, setSensorDims] = useState({});
+  const rawSensorData = useRef({}); // To store raw 16x16 data for 3D view
 
   // Initialize refs based on current WiSensConfig and mode (this needs to be dynamic)
   useEffect(() => {
@@ -107,8 +116,9 @@ const Home = () => {
 
     if (WiSensConfig && Array.isArray(WiSensConfig.sensors)) {
       WiSensConfig.sensors.forEach((sensorConfig) => {
-        let numReadWires, numGroundWires;
-        if (vizMode == VizState.GLOVE) {
+        let numReadWires, numGroundWires, isGloveMode;
+        isGloveMode = vizMode === VizState.HAND_2D || vizMode === VizState.HAND_3D;
+        if (isGloveMode) {
           numReadWires = HIGH_DEF_ROWS;
           numGroundWires = HIGH_DEF_COLS;
           currentDefaultDims[sensorConfig.id] = [numGroundWires, numReadWires, 1]; // 3D dim
@@ -158,15 +168,19 @@ const Home = () => {
   };
 
   const toggleHeatmapMode = useCallback(() => {
-    setVizMode(prevMode => {
-      const newMode = !prevMode;
-      return newMode;
-    });
+    setVizMode(prevMode =>
+      prevMode === VizState.GRID
+        ? VizState.HAND_2D
+        : prevMode === VizState.HAND_2D
+        ? VizState.HAND_3D
+        : VizState.GRID
+    );
     // When switching modes, clear current sensor data and dims
     // The useEffect above will re-initialize them based on the new mode
     setSensors({});
     setSensorDims({});
-    setAcks(Array(Array.isArray(WiSensConfig.sensors) ? WiSensConfig.sensors.length : 0).fill(false)); // Reset acks
+    if (WiSensConfig.sensors)
+      setAcks(Array(Array.isArray(WiSensConfig.sensors) ? WiSensConfig.sensors.length : 0).fill(false)); // Reset acks
   }, [WiSensConfig.sensors]);
 
   const updateSensorObjects = (config) => {
@@ -180,8 +194,9 @@ const Home = () => {
     const newAcksLength = config.sensors.length;
 
     config.sensors.forEach((sensorConfig) => {
-      let numReadWires, numGroundWires;
-      if (vizMode == VizState.GLOVE) {
+      let numReadWires, numGroundWires, isGloveMode;
+      isGloveMode = vizMode === VizState.HAND_2D || vizMode === VizState.HAND_3D;
+      if (isGloveMode) {
         numReadWires = HIGH_DEF_ROWS;
         numGroundWires = HIGH_DEF_COLS;
         updatedDims[sensorConfig.id] = [numGroundWires, numReadWires, 1]; // 3D dim
@@ -228,7 +243,11 @@ const Home = () => {
         try {
           const parsedConfig = JSON.parse(e.target.result);
           if (parsedConfig && Array.isArray(parsedConfig.sensors)) {
-            setVizMode(parsedConfig.vizOptions.glove? VizState.GLOVE:VizState.DEFAULT);
+            setVizMode(
+              parsedConfig.vizOptions.glove
+                ? VizState.HAND_2D
+                : VizState.GRID
+            );
             updateSensorObjects(parsedConfig);
             console.log("Main configuration loaded successfully.");
           } else {
@@ -309,7 +328,12 @@ const Home = () => {
             console.warn(`Sensor data for ID ${sensorId} is malformed or empty.`);
             continue;
           }
-         if (vizMode == VizState.GLOVE) {
+
+          // Store raw data for 3D interpolation
+          rawSensorData.current[sensorId] = incomingLayerData;
+
+          const isGloveMode = vizMode === VizState.HAND_2D || vizMode === VizState.HAND_3D;
+         if (isGloveMode) {
 
             const defaultNAValue = 3072;
 
@@ -576,7 +600,8 @@ const Home = () => {
     });
 
     let numReadWires, numGroundWires;
-    if (vizMode == vizOptions.GLOVE) {
+    const isGloveMode = vizMode === VizState.HAND_2D || vizMode === VizState.HAND_3D;
+    if (isGloveMode) {
       numReadWires = HIGH_DEF_ROWS;
       numGroundWires = HIGH_DEF_COLS;
     } else {
@@ -590,7 +615,7 @@ const Home = () => {
     }));
     setSensorDims((prev) => ({
       ...prev,
-      [newDevice.id]: (vizMode == vizOptions.GLOVE) ? [numGroundWires, numReadWires, 1] : [numReadWires, numGroundWires],
+      [newDevice.id]: isGloveMode ? [numGroundWires, numReadWires, 1] : [numReadWires, numGroundWires],
     }));
 
     // Ensure refs exist
@@ -611,6 +636,14 @@ const Home = () => {
 
 
   return (
+    <>
+      <SensorMapper 
+        isVisible={showMapperTool}
+        onClose={() => setShowMapperTool(false)}
+        // Pass the hand profile of the first configured sensor.
+        // This ensures the mapper shows the correct UV layout (left vs. right).
+        handProfile={WiSensConfig.sensors?.[0]?.glove === 'right' ? 'right' : 'left'}
+      />
     <SidebarProvider defaultOpen={false} open={open}>
       <div className={styles.pageDiv}>
         <Toolbar
@@ -635,6 +668,11 @@ const Home = () => {
           onToggle2D3D={toggleHeatmapMode}
           vizMode={vizMode}
         ></Toolbar>
+        <div
+          style={{ position: 'fixed', top: '80px', right: '20px', zIndex: 100 }}
+        >
+            <Button onClick={() => setShowMapperTool(true)}>Open Sensor Mapper</Button>
+        </div>
         <div
           style={{
             paddingLeft: "10%",
@@ -744,32 +782,48 @@ const Home = () => {
                   ref={sensorDivRefs.current[sensorConfig.id]}
                   className={`${styles.interactiveHeatmapDiv} ${styles.noselect}`}
                 >
-                  {sensors[sensorConfig.id] && sensorDims[sensorConfig.id] ? ((vizMode == VizState.GLOVE)? (
+                  {sensors[sensorConfig.id] && sensorDims[sensorConfig.id] ? (
+                    vizMode === VizState.GRID ? (
+                      <InteractiveHeatmap2D
+                        ref={interactiveHeatmapRefs.current[sensorConfig.id]}
+                        data={sensors[sensorConfig.id]} // 2D takes data directly
+                        dim={sensorDims[sensorConfig.id]}
+                        sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
+                        pitch={WiSensConfig.vizOptions?.pitch}
+                        selectMode={selectMode}
+                        eraseMode={eraseMode}
+                        setSelectMode={setSelectMode}
+                        showADC={adcMode}
+                      />
+                    ) : vizMode === VizState.HAND_2D ? (
                       <InteractiveHeatmapHand
                         ref={interactiveHeatmapRefs.current[sensorConfig.id]}
-                        data={sensors[sensorConfig.id]} // 2D takes data directly
+                        data={sensors[sensorConfig.id]}
                         dim={sensorDims[sensorConfig.id]}
                         sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
-                        pitch={WiSensConfig.vizOptions?.pitch} // Check if pitch is used in 2D
                         selectMode={selectMode}
                         eraseMode={eraseMode}
                         setSelectMode={setSelectMode}
                         showADC={adcMode}
-                        isLeft = {sensorConfig?.glove == "left"}
-                        isSmall = {sensorConfig?.size == "small"}
+                        isLeft={sensorConfig?.glove === "left"}
+                        isSmall={sensorConfig?.size === "small"}
                       />
-                      
-                    ) : (<InteractiveHeatmap2D
+                    ) : (
+                      <InteractiveHeatmap3D
                         ref={interactiveHeatmapRefs.current[sensorConfig.id]}
-                        data={sensors[sensorConfig.id]} // 2D takes data directly
+                        data={rawSensorData.current[sensorConfig.id]}
                         dim={sensorDims[sensorConfig.id]}
                         sensorDivRef={sensorDivRefs.current[sensorConfig.id]}
-                        pitch={WiSensConfig.vizOptions?.pitch} // Check if pitch is used in 2D
                         selectMode={selectMode}
                         eraseMode={eraseMode}
                         setSelectMode={setSelectMode}
                         showADC={adcMode}
-                      />)
+                        isLeft={sensorConfig?.glove === 'left'}
+                        isSmall={sensorConfig?.size === 'small'}
+                        showSensorMapping={showSensorMapping}
+                        setShowSensorMapping={setShowSensorMapping}
+                      />
+                    )
                   ) : (
                     <div>Loading sensor data...</div>
                   )}
@@ -792,6 +846,7 @@ const Home = () => {
         handleAddDevice={handleAddDevice}
       />
     </SidebarProvider>
+    </>
   );
 };
 

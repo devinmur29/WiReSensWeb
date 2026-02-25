@@ -1,5 +1,5 @@
 // toolbar.jsx
-import React, { useRef } from "react";
+import React, { useMemo, useRef } from "react";
 import styles from "./Toolbar.module.css";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,6 +10,12 @@ import {
 import { WiFiSettings } from "./wifiSettings";
 import { ReplayPanel } from "./replayPanel";
 import { Wifi, Repeat } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 const Toolbar = ({
   onPlay,
@@ -28,8 +34,8 @@ const Toolbar = ({
   eraseMode,
   adcMode,
   // NEW: Add onToggle2D3D and is3DMode to the props
-  onToggle2D3D, // This function will be passed from page.jsx
-  vizMode,     // This boolean will tell us the current display mode
+  onToggle2D3D,
+  vizMode,
 }) => {
   const hiddenFileInputConfig = useRef(null);
 
@@ -37,6 +43,13 @@ const Toolbar = ({
     hiddenFileInputConfig.current.value = null;
     hiddenFileInputConfig.current.click();
   };
+
+  const vizButtonText = useMemo(() => {
+    if (vizMode === 'GRID') return '2D Grid';
+    if (vizMode === 'HAND_2D') return '2D Hand';
+    if (vizMode === 'HAND_3D') return '3D Hand';
+    return 'Toggle Viz';
+  }, [vizMode]);
 
   return (
     <div
@@ -57,9 +70,9 @@ const Toolbar = ({
       >
         {connected ? "Stop Recording" : "Record"}
       </Button>
-      <div style={{ display: connecting ? "block" : "none" }}>
+      {/* <div style={{ display: connecting ? "block" : "none" }}>
         Connecting...
-      </div>
+      </div> */}
       <Popover>
         <PopoverTrigger>
           <Button size="icon">
@@ -105,12 +118,16 @@ const Toolbar = ({
         </PopoverContent>
       </Popover>
 
-      {/* MODIFIED: Toggle 2D/3D Button */}
-      <Button
-        onClick={onToggle2D3D} // Call the function passed from page.jsx
-      >
-        Toggle {vizMode ? 'Glove' : 'Default'} {/* Dynamically change button text */}
-      </Button>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button onClick={onToggle2D3D}>
+              {vizButtonText}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Toggle visualization between 2D Grid, 2D Hand, and 3D Hand</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
 
       <Button
         onClick={toggleDrawer}

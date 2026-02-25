@@ -11,6 +11,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@jshomee/js-tps": "^1.0.168",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-label": "^2.1.2",
     "@radix-ui/react-popover": "^1.1.6",
@@ -45,6 +46,7 @@
     "tailwindcss": "3.3.2",
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.165.0",
+    "transformation-models": "^1.0.2",
     "typescript": "5.0.4",
     "utf-8-validate": "^6.0.4",
     "vaul": "^1.1.2"
